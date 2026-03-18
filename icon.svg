@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128">
+  <rect width="128" height="128" fill="#1a0a2e"/>
+  <text x="64" y="50" font-family="serif" font-size="20" fill="#c0a040" text-anchor="middle">ELDEN</text>
+  <text x="64" y="75" font-family="serif" font-size="16" fill="#c0a040" text-anchor="middle">BAPTIST</text>
+  <path d="M 54 85 L 64 105 L 74 85 Z" fill="#c0a040"/>
+</svg>
