@@ -1,5 +1,5 @@
 extends Area2D
-## Region Trigger - Transitions between biomes/regions
+## Region Trigger - Transitions between biomes/regions with audio feedback
 
 @export var target_region: String = ""
 @export var region_display_name: String = ""

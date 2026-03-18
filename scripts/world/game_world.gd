@@ -1,11 +1,13 @@
 extends Node2D
 ## GameWorld - Main game scene, manages regions, spawning, and events
+## Shows tutorial sequence before enemies activate
 
 @onready var player: CharacterBody2D = $Player
 @onready var ui: CanvasLayer = $GameUI
 @onready var tilemap: Node2D = $WorldMap
 
 var event_spawn_nodes: Array[Node2D] = []
+var enemies_active: bool = false
 
 func _ready() -> void:
 	GameManager.set_state(GameManager.GameState.PLAYING)
@@ -23,10 +25,21 @@ func _ready() -> void:
 	if pos.x != 0 or pos.y != 0:
 		player.global_position = Vector2(pos.x, pos.y)
 	
-	# Show tutorial
-	TutorialManager.show_tutorial("movement")
+	# Play music for current region
+	AudioManager.play_music(GameManager.current_region)
+	
+	# Start tutorial intro sequence
+	TutorialManager.intro_tutorial_complete.connect(_on_intro_complete)
+	TutorialManager.start_intro_sequence()
+
+func _on_intro_complete() -> void:
+	enemies_active = true
 
 func _on_event_triggered(event: Dictionary) -> void:
+	# Don't spawn events during tutorial
+	if not enemies_active:
+		return
+	
 	# Spawn event near player
 	if not player or not is_instance_valid(player):
 		return

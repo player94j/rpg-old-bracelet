@@ -8,7 +8,7 @@ signal event_completed(event_id: String)
 var event_timer: float = 0.0
 var event_interval_min: float = 30.0
 var event_interval_max: float = 60.0
-var next_event_time: float = 15.0  # First event comes quicker
+var next_event_time: float = 45.0  # First event delayed to let player explore
 var active_events: Array[Dictionary] = []
 var completed_event_ids: Array[String] = []
 var event_counter: int = 0

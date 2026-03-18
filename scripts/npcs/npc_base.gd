@@ -1,5 +1,6 @@
 extends StaticBody2D
 ## NPC Base - Handles dialogue, quests, and merchant functionality
+## NPCs have distinct green/teal visuals to differentiate from enemies
 
 signal dialogue_started(npc_id: String)
 signal dialogue_ended(npc_id: String)
@@ -24,6 +25,66 @@ func _ready() -> void:
 	if interact_label:
 		interact_label.visible = false
 	_setup_npc_data()
+	_build_npc_visual()
+
+func _build_npc_visual() -> void:
+	if not sprite:
+		return
+	# NPCs are distinctly shaped and colored - friendly appearance
+	match npc_id:
+		"npc_hermit":
+			# Old man with robe
+			sprite.polygon = PackedVector2Array([
+				Vector2(-5, -14), Vector2(0, -18), Vector2(5, -14),
+				Vector2(6, -8), Vector2(8, -2), Vector2(10, 6),
+				Vector2(6, 14), Vector2(0, 16), Vector2(-6, 14),
+				Vector2(-10, 6), Vector2(-8, -2), Vector2(-6, -8)
+			])
+			sprite.color = Color(0.3, 0.7, 0.4)  # Sage green
+		"npc_ghost":
+			# Translucent ghost shape
+			sprite.polygon = PackedVector2Array([
+				Vector2(-6, -14), Vector2(0, -18), Vector2(6, -14),
+				Vector2(8, -4), Vector2(8, 8),
+				Vector2(4, 12), Vector2(2, 8), Vector2(0, 14),
+				Vector2(-2, 8), Vector2(-4, 12),
+				Vector2(-8, 8), Vector2(-8, -4)
+			])
+			sprite.color = Color(0.6, 0.7, 0.9, 0.7)  # Ghostly blue
+		"npc_blacksmith":
+			# Stocky, broad shoulders
+			sprite.polygon = PackedVector2Array([
+				Vector2(-8, -12), Vector2(0, -16), Vector2(8, -12),
+				Vector2(12, -4), Vector2(12, 4), Vector2(10, 10),
+				Vector2(6, 14), Vector2(-6, 14), Vector2(-10, 10),
+				Vector2(-12, 4), Vector2(-12, -4)
+			])
+			sprite.color = Color(0.7, 0.5, 0.3)  # Brown/forge
+		"npc_spell_vendor":
+			# Wizard with pointed hat
+			sprite.polygon = PackedVector2Array([
+				Vector2(-3, -20), Vector2(0, -26), Vector2(3, -20),  # hat point
+				Vector2(6, -12), Vector2(8, -4), Vector2(10, 4),
+				Vector2(6, 12), Vector2(0, 14), Vector2(-6, 12),
+				Vector2(-10, 4), Vector2(-8, -4), Vector2(-6, -12)
+			])
+			sprite.color = Color(0.4, 0.3, 0.8)  # Purple/arcane
+		"npc_witch":
+			# Hunched witch
+			sprite.polygon = PackedVector2Array([
+				Vector2(-4, -16), Vector2(2, -20), Vector2(6, -14),
+				Vector2(8, -6), Vector2(10, 2), Vector2(8, 10),
+				Vector2(4, 14), Vector2(-2, 16), Vector2(-8, 12),
+				Vector2(-10, 4), Vector2(-8, -6)
+			])
+			sprite.color = Color(0.3, 0.5, 0.3)  # Swamp green
+		_:
+			# Default friendly NPC
+			sprite.polygon = PackedVector2Array([
+				Vector2(-6, -12), Vector2(0, -16), Vector2(6, -12),
+				Vector2(8, 0), Vector2(6, 12), Vector2(-6, 12), Vector2(-8, 0)
+			])
+			sprite.color = Color(0.3, 0.7, 0.5)
 
 func _setup_npc_data() -> void:
 	match npc_id:
@@ -81,7 +142,6 @@ func _setup_npc_data() -> void:
 				LootTable.get_item_by_id("health_potion"),
 				LootTable.get_item_by_id("mana_potion"),
 			]
-			# Set prices
 			for item in shop_items:
 				if not item.is_empty():
 					item["price"] = item.get("value", 50)
@@ -109,7 +169,6 @@ func interact(player: Node2D) -> void:
 	in_dialogue = true
 	current_line = 0
 	
-	# Determine which lines to show
 	var lines = dialogue_lines
 	if not quest_to_give.is_empty() and QuestManager.is_quest_completed(quest_to_give):
 		lines = post_quest_lines if not post_quest_lines.is_empty() else dialogue_lines
@@ -117,8 +176,8 @@ func interact(player: Node2D) -> void:
 	GameManager.set_state(GameManager.GameState.DIALOGUE)
 	dialogue_started.emit(npc_id)
 	QuestManager.notify_interact(npc_id)
+	AudioManager.play_sfx("npc_talk")
 	
-	# Show dialogue through UI
 	var ui = get_tree().get_first_node_in_group("game_ui")
 	if ui and ui.has_method("show_dialogue"):
 		ui.show_dialogue(npc_name, lines[current_line])
@@ -133,6 +192,7 @@ func advance_dialogue() -> void:
 		end_dialogue()
 		return
 	
+	AudioManager.play_sfx("npc_talk")
 	var ui = get_tree().get_first_node_in_group("game_ui")
 	if ui and ui.has_method("show_dialogue"):
 		ui.show_dialogue(npc_name, lines[current_line])
@@ -141,11 +201,9 @@ func end_dialogue() -> void:
 	in_dialogue = false
 	current_line = 0
 	
-	# Give quest if applicable
 	if not quest_to_give.is_empty() and not QuestManager.is_quest_active(quest_to_give) and not QuestManager.is_quest_completed(quest_to_give):
 		QuestManager.start_quest(quest_to_give)
 	
-	# Open shop if merchant
 	if is_merchant:
 		var ui = get_tree().get_first_node_in_group("game_ui")
 		if ui and ui.has_method("show_shop"):

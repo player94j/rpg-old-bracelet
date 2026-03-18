@@ -1,5 +1,6 @@
 extends CanvasLayer
-## GameUI - Complete HUD, dialogue, inventory, quest log, skill tree, shop, death screen
+## GameUI - Complete HUD, dialogue, inventory, quest log, skill tree, shop,
+## death screen, controls, settings, and tutorial panels with audio
 
 # Node references
 @onready var hp_bar: ProgressBar = $HUD/TopLeft/HPBar
@@ -33,6 +34,8 @@ extends CanvasLayer
 @onready var tutorial_title: Label = $TutorialPanel/VBox/TitleLabel
 @onready var tutorial_text: Label = $TutorialPanel/VBox/ContentLabel
 @onready var map_panel: PanelContainer = $MapPanel
+@onready var controls_panel: PanelContainer = $ControlsPanel
+@onready var settings_panel: PanelContainer = $SettingsPanel
 
 var region_label_timer: float = 0.0
 var notification_timer: float = 0.0
@@ -90,6 +93,9 @@ func _process(delta: float) -> void:
 		tutorial_timer -= delta
 		if tutorial_timer <= 0 and tutorial_panel:
 			tutorial_panel.visible = false
+			# If intro is active, advance on auto-hide
+			if TutorialManager.is_intro_active():
+				TutorialManager.advance_intro()
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("pause"):
@@ -103,11 +109,13 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event.is_action_pressed("map"):
 		_toggle_map()
 	elif event.is_action_pressed("interact"):
-		if dialogue_panel and dialogue_panel.visible:
-			_advance_dialogue()
 		if tutorial_panel and tutorial_panel.visible:
 			tutorial_panel.visible = false
 			tutorial_timer = 0
+			if TutorialManager.is_intro_active():
+				TutorialManager.advance_intro()
+		if dialogue_panel and dialogue_panel.visible:
+			_advance_dialogue()
 		if shop_panel and shop_panel.visible:
 			pass  # Shop handles its own input
 
@@ -121,6 +129,8 @@ func _hide_all_panels() -> void:
 	if pause_panel: pause_panel.visible = false
 	if tutorial_panel: tutorial_panel.visible = false
 	if map_panel: map_panel.visible = false
+	if controls_panel: controls_panel.visible = false
+	if settings_panel: settings_panel.visible = false
 	if combo_label: combo_label.visible = false
 
 func _update_hud() -> void:
@@ -181,6 +191,7 @@ func _on_spell_changed(spell: Dictionary) -> void:
 		spell_label.text = spell.get("name", "No Spell")
 
 func _on_level_up(new_level: int) -> void:
+	AudioManager.play_sfx("level_up")
 	_show_notification("LEVEL UP! Now Level %d" % new_level)
 	_update_hud()
 
@@ -193,20 +204,26 @@ func _on_gold_changed(new_amount: int) -> void:
 		gold_label.text = "%d G" % new_amount
 
 func _on_item_acquired(item: Dictionary) -> void:
+	AudioManager.play_sfx("pickup")
 	_show_notification("Got: %s" % item.get("name", "Unknown"))
 
 func _on_region_entered(region: String) -> void:
+	AudioManager.play_sfx("region_enter")
+	AudioManager.play_music(region)
 	_update_hud()
 
 func _on_boss_defeated(boss_id: String) -> void:
+	AudioManager.play_sfx("boss_death")
 	_show_notification("BOSS DEFEATED!")
 
 func _on_quest_started(quest_id: String) -> void:
 	var quest = QuestManager.player_quests.get(quest_id, {})
+	AudioManager.play_sfx("tutorial_popup")
 	_show_notification("Quest Started: %s" % quest.get("name", ""))
 
 func _on_quest_completed(quest_id: String) -> void:
 	var quest = QuestManager.player_quests.get(quest_id, {})
+	AudioManager.play_sfx("quest_complete")
 	_show_notification("Quest Complete: %s" % quest.get("name", ""))
 
 func _on_quest_updated(quest_id: String, _obj: String) -> void:
@@ -222,7 +239,7 @@ func _on_tutorial_shown(tutorial_id: String) -> void:
 			tutorial_title.text = data.get("title", "")
 		if tutorial_text:
 			tutorial_text.text = data.get("text", "")
-		tutorial_timer = 6.0
+		tutorial_timer = 8.0 if TutorialManager.is_intro_active() else 6.0
 
 func _on_event_triggered(event: Dictionary) -> void:
 	_show_notification("Event: %s!" % event.get("name", "Unknown"))
@@ -233,6 +250,7 @@ func _on_player_died() -> void:
 
 # === DIALOGUE ===
 func show_dialogue(speaker: String, text: String) -> void:
+	AudioManager.play_sfx("npc_talk")
 	if dialogue_panel:
 		dialogue_panel.visible = true
 		if dialogue_name: dialogue_name.text = speaker
@@ -250,6 +268,7 @@ func _advance_dialogue() -> void:
 func show_shop(shop_name: String, items: Array[Dictionary]) -> void:
 	if not shop_panel:
 		return
+	AudioManager.play_sfx("open_menu")
 	shop_panel.visible = true
 	_populate_shop(shop_name, items)
 
@@ -270,12 +289,13 @@ func _populate_shop(_name: String, items: Array[Dictionary]) -> void:
 	# Close button
 	var close_btn = Button.new()
 	close_btn.text = "Close Shop"
-	close_btn.pressed.connect(func(): shop_panel.visible = false; GameManager.set_state(GameManager.GameState.PLAYING))
+	close_btn.pressed.connect(func(): shop_panel.visible = false; GameManager.set_state(GameManager.GameState.PLAYING); AudioManager.play_sfx("close_menu"))
 	shop_grid.add_child(close_btn)
 
 func _buy_item(item: Dictionary) -> void:
 	var price = item.get("price", 999999)
 	if GameManager.spend_gold(price):
+		AudioManager.play_sfx("buy_item")
 		match item.type:
 			"weapon":
 				GameManager.weapon_inventory.append(item)
@@ -295,9 +315,11 @@ func _toggle_inventory() -> void:
 		return
 	if inventory_panel.visible:
 		inventory_panel.visible = false
+		AudioManager.play_sfx("close_menu")
 		GameManager.set_state(GameManager.GameState.PLAYING)
 	else:
 		_hide_all_panels()
+		AudioManager.play_sfx("open_menu")
 		inventory_panel.visible = true
 		GameManager.set_state(GameManager.GameState.INVENTORY)
 		_populate_inventory()
@@ -345,7 +367,7 @@ func _populate_inventory() -> void:
 		btn.text = "%s (DMG: %d)" % [w.get("name", "???"), w.get("damage", 0)]
 		btn.custom_minimum_size = Vector2(250, 28)
 		var wcopy = w
-		btn.pressed.connect(func(): GameManager.equip_weapon(wcopy); _populate_inventory())
+		btn.pressed.connect(func(): GameManager.equip_weapon(wcopy); AudioManager.play_sfx("equip"); _populate_inventory())
 		inventory_grid.add_child(btn)
 	
 	# Spells list
@@ -358,7 +380,7 @@ func _populate_inventory() -> void:
 		btn.text = "%s (DMG: %d, MP: %d)" % [s.get("name", "???"), s.get("damage", 0), s.get("mana_cost", 0)]
 		btn.custom_minimum_size = Vector2(250, 28)
 		var scopy = s
-		btn.pressed.connect(func(): GameManager.equip_spell(scopy); _populate_inventory())
+		btn.pressed.connect(func(): GameManager.equip_spell(scopy); AudioManager.play_sfx("equip"); _populate_inventory())
 		inventory_grid.add_child(btn)
 	
 	# Items
@@ -374,11 +396,11 @@ func _populate_inventory() -> void:
 		btn.add_theme_color_override("font_color", LootTable.get_rarity_color(item.get("rarity", "common")))
 		var icopy = item
 		if item.type == "consumable":
-			btn.pressed.connect(func(): GameManager.use_consumable(icopy.id); _populate_inventory())
+			btn.pressed.connect(func(): GameManager.use_consumable(icopy.id); AudioManager.play_sfx("heal"); _populate_inventory())
 		elif item.type == "armor":
-			btn.pressed.connect(func(): GameManager.equipped.armor = icopy; _populate_inventory())
+			btn.pressed.connect(func(): GameManager.equipped.armor = icopy; AudioManager.play_sfx("equip"); _populate_inventory())
 		elif item.type == "accessory":
-			btn.pressed.connect(func(): GameManager.equipped.accessory = icopy; _populate_inventory())
+			btn.pressed.connect(func(): GameManager.equipped.accessory = icopy; AudioManager.play_sfx("equip"); _populate_inventory())
 		inventory_grid.add_child(btn)
 
 # === QUEST LOG ===
@@ -387,9 +409,11 @@ func _toggle_quest_log() -> void:
 		return
 	if quest_panel.visible:
 		quest_panel.visible = false
+		AudioManager.play_sfx("close_menu")
 		GameManager.set_state(GameManager.GameState.PLAYING)
 	else:
 		_hide_all_panels()
+		AudioManager.play_sfx("open_menu")
 		quest_panel.visible = true
 		GameManager.set_state(GameManager.GameState.PAUSED)
 		_populate_quest_log()
@@ -450,9 +474,11 @@ func _toggle_skill_tree() -> void:
 		return
 	if skill_panel.visible:
 		skill_panel.visible = false
+		AudioManager.play_sfx("close_menu")
 		GameManager.set_state(GameManager.GameState.PLAYING)
 	else:
 		_hide_all_panels()
+		AudioManager.play_sfx("open_menu")
 		skill_panel.visible = true
 		GameManager.set_state(GameManager.GameState.PAUSED)
 		_populate_skill_tree()
@@ -474,7 +500,7 @@ func _populate_skill_tree() -> void:
 				btn.text += " [MAX]"
 				btn.disabled = true
 			var skill_id = id
-			btn.pressed.connect(func(): SkillManager.unlock_skill("melee", skill_id); _populate_skill_tree())
+			btn.pressed.connect(func(): SkillManager.unlock_skill("melee", skill_id); AudioManager.play_sfx("level_up"); _populate_skill_tree())
 			skill_melee_list.add_child(btn)
 			var desc = Label.new()
 			desc.text = "  %s" % skill.description
@@ -494,7 +520,7 @@ func _populate_skill_tree() -> void:
 				btn.text += " [MAX]"
 				btn.disabled = true
 			var skill_id = id
-			btn.pressed.connect(func(): SkillManager.unlock_skill("magic", skill_id); _populate_skill_tree())
+			btn.pressed.connect(func(): SkillManager.unlock_skill("magic", skill_id); AudioManager.play_sfx("level_up"); _populate_skill_tree())
 			skill_magic_list.add_child(btn)
 			var desc = Label.new()
 			desc.text = "  %s" % skill.description
@@ -505,11 +531,15 @@ func _populate_skill_tree() -> void:
 func _toggle_map() -> void:
 	if not map_panel:
 		return
-	map_panel.visible = not map_panel.visible
 	if map_panel.visible:
-		GameManager.set_state(GameManager.GameState.PAUSED)
-	else:
+		map_panel.visible = false
+		AudioManager.play_sfx("close_menu")
 		GameManager.set_state(GameManager.GameState.PLAYING)
+	else:
+		_hide_all_panels()
+		AudioManager.play_sfx("open_menu")
+		map_panel.visible = true
+		GameManager.set_state(GameManager.GameState.PAUSED)
 
 # === PAUSE ===
 func _toggle_pause() -> void:
@@ -518,16 +548,27 @@ func _toggle_pause() -> void:
 	if pause_panel:
 		if pause_panel.visible:
 			pause_panel.visible = false
+			AudioManager.play_sfx("close_menu")
 			GameManager.set_state(GameManager.GameState.PLAYING)
 		else:
 			_hide_all_panels()
+			AudioManager.play_sfx("open_menu")
 			pause_panel.visible = true
 			GameManager.set_state(GameManager.GameState.PAUSED)
 
+# === CONTROLS PANEL (IN GAME) ===
+func _toggle_controls() -> void:
+	if controls_panel:
+		controls_panel.visible = not controls_panel.visible
+
+func _toggle_settings() -> void:
+	if settings_panel:
+		settings_panel.visible = not settings_panel.visible
+
 # === NOTIFICATIONS ===
-func show_region_name(name: String) -> void:
+func show_region_name(region_name: String) -> void:
 	if region_label:
-		region_label.text = name
+		region_label.text = region_name
 		region_label.visible = true
 		region_label_timer = 3.0
 
@@ -543,6 +584,7 @@ func _on_resume_pressed() -> void:
 
 func _on_save_pressed() -> void:
 	SaveManager.save_game(0)
+	AudioManager.play_sfx("save_game")
 	_show_notification("Game Saved!")
 
 func _on_load_pressed() -> void:
@@ -553,16 +595,53 @@ func _on_load_pressed() -> void:
 		GameManager.set_state(GameManager.GameState.PLAYING)
 		_update_hud()
 
+func _on_controls_pressed() -> void:
+	AudioManager.play_sfx("open_menu")
+	_toggle_controls()
+
+func _on_settings_pressed() -> void:
+	AudioManager.play_sfx("open_menu")
+	_toggle_settings()
+
 func _on_quit_pressed() -> void:
+	AudioManager.stop_music()
 	get_tree().change_scene_to_file("res://scenes/menus/main_menu.tscn")
+
+# === SETTINGS CALLBACKS ===
+func _on_master_vol_changed(value: float) -> void:
+	AudioManager.set_master_volume(value / 100.0)
+
+func _on_music_vol_changed(value: float) -> void:
+	AudioManager.set_music_volume(value / 100.0)
+
+func _on_sfx_vol_changed(value: float) -> void:
+	AudioManager.set_sfx_volume(value / 100.0)
+
+func _on_fullscreen_toggled(toggled_on: bool) -> void:
+	if toggled_on:
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
+	else:
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
+
+func _on_controls_close() -> void:
+	if controls_panel:
+		controls_panel.visible = false
+		AudioManager.play_sfx("close_menu")
+
+func _on_settings_close() -> void:
+	if settings_panel:
+		settings_panel.visible = false
+		AudioManager.play_sfx("close_menu")
 
 # === DEATH SCREEN ===
 func _on_respawn_pressed() -> void:
+	AudioManager.play_sfx("heal")
 	if death_panel:
 		death_panel.visible = false
 	var players = get_tree().get_nodes_in_group("player")
 	if players.size() > 0:
-		players[0].respawn(Vector2(0, 0))
+		players[0].respawn(Vector2(800, 800))
 
 func _on_death_quit_pressed() -> void:
+	AudioManager.stop_music()
 	get_tree().change_scene_to_file("res://scenes/menus/main_menu.tscn")

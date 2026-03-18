@@ -1,5 +1,5 @@
 extends CharacterBody2D
-## Boss Base - Multi-phase boss system
+## Boss Base - Multi-phase boss system with distinct visuals and audio
 ## Supports multiple phases, attack patterns, and phase transitions
 
 signal boss_phase_changed(phase: int)
@@ -26,9 +26,10 @@ var knockback_velocity: Vector2 = Vector2.ZERO
 var flash_timer: float = 0.0
 var ng_scale: float = 1.0
 var intro_done: bool = false
+var boss_name_label: Label = null
 
 # Phase thresholds (hp percentage to trigger next phase)
-var phase_thresholds: Array[float] = [0.5]  # Default: phase 2 at 50% HP
+var phase_thresholds: Array[float] = [0.5]
 
 # Attack patterns per phase
 var attack_patterns: Dictionary = {
@@ -50,7 +51,6 @@ func _ready() -> void:
 		max_hp *= ng_scale
 		base_damage *= ng_scale
 		move_speed *= 1.0 + GameManager.ng_plus_cycle * 0.1
-		# Add extra patterns in NG+
 		if GameManager.ng_plus_cycle >= 1:
 			attack_patterns[1].append("aoe")
 			attack_patterns[2].append("rapid_slash")
@@ -63,14 +63,78 @@ func _ready() -> void:
 		boss_health_bar.value = hp
 	
 	TutorialManager.show_tutorial("boss")
+	_build_boss_visual()
+	_create_boss_name_label()
 	
 	# Intro delay
-	state_timer = 2.0
+	state_timer = 2.5
+	AudioManager.play_sfx("boss_roar")
 
 func _setup_phase_thresholds() -> void:
 	phase_thresholds.clear()
 	for i in range(1, phase_count):
 		phase_thresholds.append(1.0 - (float(i) / float(phase_count)))
+
+func _create_boss_name_label() -> void:
+	boss_name_label = Label.new()
+	boss_name_label.text = boss_name
+	boss_name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	boss_name_label.position = Vector2(-40, -45)
+	boss_name_label.add_theme_font_size_override("font_size", 11)
+	boss_name_label.add_theme_color_override("font_color", Color(1, 0.3, 0.2, 0.9))
+	add_child(boss_name_label)
+
+func _build_boss_visual() -> void:
+	if not sprite:
+		return
+	# Each boss gets a unique, large, distinct polygon shape
+	match boss_id:
+		"boss_hollow_knight":
+			# Armored knight - angular, intimidating
+			sprite.polygon = PackedVector2Array([
+				Vector2(-16, -24), Vector2(-4, -30), Vector2(4, -30), Vector2(16, -24),
+				Vector2(20, -12), Vector2(24, -4), Vector2(22, 8),
+				Vector2(16, 18), Vector2(8, 22), Vector2(0, 24),
+				Vector2(-8, 22), Vector2(-16, 18), Vector2(-22, 8),
+				Vector2(-24, -4), Vector2(-20, -12)
+			])
+			sprite.color = Color(0.6, 0.5, 0.35)
+		"boss_bog_hydra":
+			# Multi-headed serpentine beast
+			sprite.polygon = PackedVector2Array([
+				Vector2(-12, -28), Vector2(0, -32), Vector2(12, -28),
+				Vector2(20, -16), Vector2(26, -8), Vector2(24, 4),
+				Vector2(18, 16), Vector2(8, 24), Vector2(0, 26),
+				Vector2(-8, 24), Vector2(-18, 16), Vector2(-24, 4),
+				Vector2(-26, -8), Vector2(-20, -16)
+			])
+			sprite.color = Color(0.2, 0.5, 0.15)
+		"boss_storm_titan":
+			# Massive elemental
+			sprite.polygon = PackedVector2Array([
+				Vector2(-8, -34), Vector2(0, -38), Vector2(8, -34),
+				Vector2(18, -22), Vector2(26, -10), Vector2(28, 0),
+				Vector2(24, 14), Vector2(16, 22), Vector2(0, 28),
+				Vector2(-16, 22), Vector2(-24, 14), Vector2(-28, 0),
+				Vector2(-26, -10), Vector2(-18, -22)
+			])
+			sprite.color = Color(0.5, 0.6, 0.85)
+		"boss_dark_sovereign":
+			# Dark lord with crown shape
+			sprite.polygon = PackedVector2Array([
+				Vector2(-14, -32), Vector2(-6, -36), Vector2(0, -30),
+				Vector2(6, -36), Vector2(14, -32),  # crown spikes
+				Vector2(22, -16), Vector2(26, 0), Vector2(22, 16),
+				Vector2(12, 26), Vector2(0, 30),
+				Vector2(-12, 26), Vector2(-22, 16), Vector2(-26, 0),
+				Vector2(-22, -16)
+			])
+			sprite.color = Color(0.15, 0.05, 0.2)
+		_:
+			sprite.polygon = PackedVector2Array([
+				Vector2(-18, -20), Vector2(0, -28), Vector2(18, -20),
+				Vector2(22, 5), Vector2(15, 20), Vector2(-15, 20), Vector2(-22, 5)
+			])
 
 func _physics_process(delta: float) -> void:
 	if GameManager.current_state != GameManager.GameState.PLAYING:
@@ -132,7 +196,7 @@ func _boss_chase(delta: float) -> void:
 	var dist = global_position.distance_to(target.global_position)
 	if dist <= attack_range:
 		boss_state = BossState.ATTACK
-		state_timer = 0.4  # Wind-up
+		state_timer = 0.4
 		velocity = Vector2.ZERO
 		return
 	
@@ -170,35 +234,38 @@ func _execute_attack(pattern: String) -> void:
 			_attack_rapid_slash(dir)
 
 func _attack_slash(dir: Vector2) -> void:
+	AudioManager.play_sfx("heavy_swing")
 	if target and target.has_method("take_damage"):
 		var dist = global_position.distance_to(target.global_position)
 		if dist < attack_range * 2:
 			target.take_damage(base_damage, dir * 150)
+			AudioManager.play_sfx("heavy_hit")
 	velocity = dir * 100
 
 func _attack_slam() -> void:
-	# AoE ground slam
+	AudioManager.play_sfx("boss_slam")
 	var players = get_tree().get_nodes_in_group("player")
 	for p in players:
 		if global_position.distance_to(p.global_position) < attack_range * 2.5:
 			var dir = (p.global_position - global_position).normalized()
 			p.take_damage(base_damage * 1.3, dir * 200)
-	# Visual effect
 	_spawn_aoe_effect(global_position, attack_range * 2.5)
 
 func _attack_charge(dir: Vector2) -> void:
+	AudioManager.play_sfx("heavy_swing")
 	velocity = dir * move_speed * 4
-	# Damage on contact handled by collision
 	await get_tree().create_timer(0.5).timeout
 	if target and is_instance_valid(target):
 		if global_position.distance_to(target.global_position) < attack_range * 2:
 			var kdir = (target.global_position - global_position).normalized()
 			target.take_damage(base_damage * 1.5, kdir * 250)
+			AudioManager.play_sfx("boss_slam")
 
 func _attack_aoe() -> void:
-	# Delayed AoE
+	AudioManager.play_sfx("spell_cast")
 	_spawn_aoe_effect(global_position, 80)
 	await get_tree().create_timer(0.8).timeout
+	AudioManager.play_sfx("boss_slam")
 	var players = get_tree().get_nodes_in_group("player")
 	for p in players:
 		if global_position.distance_to(p.global_position) < 80:
@@ -206,7 +273,7 @@ func _attack_aoe() -> void:
 			p.take_damage(base_damage * 1.8, dir * 180)
 
 func _attack_summon() -> void:
-	# Spawn minions
+	AudioManager.play_sfx("spell_cast")
 	var enemy_scene = preload("res://scenes/enemies/enemy.tscn")
 	for i in range(2):
 		var minion = enemy_scene.instantiate()
@@ -223,6 +290,7 @@ func _attack_summon() -> void:
 func _attack_rapid_slash(dir: Vector2) -> void:
 	for i in range(3):
 		await get_tree().create_timer(0.2).timeout
+		AudioManager.play_sfx("sword_swing")
 		if target and is_instance_valid(target):
 			if global_position.distance_to(target.global_position) < attack_range * 2:
 				target.take_damage(base_damage * 0.6, dir * 80)
@@ -232,6 +300,7 @@ func _boss_phase_transition(delta: float) -> void:
 	if state_timer <= 0:
 		current_phase += 1
 		boss_phase_changed.emit(current_phase)
+		AudioManager.play_sfx("boss_phase")
 		# Heal slightly on phase change
 		hp += max_hp * 0.1
 		hp = minf(hp, max_hp)
@@ -239,7 +308,6 @@ func _boss_phase_transition(delta: float) -> void:
 		if boss_health_bar:
 			boss_health_bar.value = hp
 		boss_state = BossState.CHASE
-		# Burst of speed after transition
 		move_speed *= 1.15
 
 func _boss_special(delta: float) -> void:
@@ -254,8 +322,9 @@ func take_damage(amount: float, knockback: Vector2 = Vector2.ZERO) -> void:
 		return
 	
 	hp -= amount
-	knockback_velocity = knockback * 0.3  # Bosses resist knockback
+	knockback_velocity = knockback * 0.3
 	flash_timer = 0.15
+	AudioManager.play_sfx("enemy_hit")
 	
 	boss_health_changed.emit(hp, max_hp)
 	if boss_health_bar:
@@ -272,14 +341,15 @@ func _check_phase_transition() -> void:
 		if hp_pct <= phase_thresholds[current_phase - 1]:
 			boss_state = BossState.PHASE_TRANSITION
 			state_timer = 2.0
-			# Invulnerable during transition
 			flash_timer = 2.0
+			AudioManager.play_sfx("boss_roar")
 
 func _die() -> void:
 	boss_state = BossState.DEAD
 	hp = 0
 	velocity = Vector2.ZERO
 	
+	AudioManager.play_sfx("boss_death")
 	GameManager.on_boss_defeated(boss_id)
 	GameManager.on_enemy_killed({
 		"id": boss_id,
@@ -291,10 +361,8 @@ func _die() -> void:
 	QuestManager.notify_kill(boss_id)
 	boss_defeated_signal.emit(boss_id)
 	
-	# Drop epic loot
 	_drop_boss_loot()
 	
-	# Death animation
 	if sprite:
 		var tw = create_tween()
 		tw.tween_property(sprite, "scale", Vector2(1.5, 1.5), 0.5)
@@ -339,15 +407,27 @@ func _update_visuals(_delta: float) -> void:
 	if flash_timer > 0:
 		sprite.color = Color.WHITE
 	else:
+		var base_color = _get_boss_base_color()
 		match current_phase:
-			1: sprite.color = Color(0.8, 0.2, 0.2)
-			2: sprite.color = Color(0.9, 0.1, 0.5)
-			3: sprite.color = Color(0.6, 0.1, 0.8)
-			_: sprite.color = Color(0.3, 0.0, 0.1)
+			1: sprite.color = base_color
+			2: sprite.color = base_color.lerp(Color(0.9, 0.1, 0.5), 0.3)
+			3: sprite.color = base_color.lerp(Color(0.6, 0.1, 0.8), 0.4)
+			_: sprite.color = base_color.lerp(Color(0.3, 0.0, 0.1), 0.5)
 	# Pulsing effect in phase transition
 	if boss_state == BossState.PHASE_TRANSITION:
 		var pulse = (sin(Time.get_ticks_msec() * 0.01) + 1) * 0.5
 		sprite.color = sprite.color.lerp(Color.WHITE, pulse)
+	# Boss name label shows phase
+	if boss_name_label and current_phase > 1:
+		boss_name_label.text = "%s (Phase %d)" % [boss_name, current_phase]
+
+func _get_boss_base_color() -> Color:
+	match boss_id:
+		"boss_hollow_knight": return Color(0.6, 0.5, 0.35)
+		"boss_bog_hydra": return Color(0.2, 0.5, 0.15)
+		"boss_storm_titan": return Color(0.5, 0.6, 0.85)
+		"boss_dark_sovereign": return Color(0.15, 0.05, 0.2)
+		_: return Color(0.8, 0.2, 0.2)
 
 func setup_boss(id: String, data: Dictionary) -> void:
 	boss_id = id

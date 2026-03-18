@@ -1,5 +1,5 @@
 extends Area2D
-## Spell Projectile - Handles all spell types (projectile, area, beam)
+## Spell Projectile - Handles all spell types with distinct visuals and audio
 
 var direction: Vector2 = Vector2.RIGHT
 var speed: float = 300.0
@@ -23,6 +23,7 @@ func setup(dir: Vector2, dmg: float, data: Dictionary) -> void:
 	spell_data = data
 	spell_type = data.get("subtype", "projectile")
 	rotation = direction.angle()
+	_build_spell_visual()
 	
 	match spell_type:
 		"projectile":
@@ -37,6 +38,41 @@ func setup(dir: Vector2, dmg: float, data: Dictionary) -> void:
 			speed = 500.0
 			lifetime = 1.5
 
+func _build_spell_visual() -> void:
+	if not sprite:
+		return
+	var id = spell_data.get("id", "")
+	sprite.color = _get_spell_color()
+	match id:
+		"holy_spark":
+			sprite.polygon = PackedVector2Array([
+				Vector2(-4, -2), Vector2(6, 0), Vector2(-4, 2), Vector2(-2, 0)
+			])
+		"flame_wave":
+			sprite.polygon = PackedVector2Array([
+				Vector2(-5, -4), Vector2(6, -2), Vector2(8, 0),
+				Vector2(6, 2), Vector2(-5, 4), Vector2(-3, 0)
+			])
+		"ice_lance":
+			sprite.polygon = PackedVector2Array([
+				Vector2(-6, -1), Vector2(8, 0), Vector2(-6, 1)
+			])
+		"lightning_bolt":
+			sprite.polygon = PackedVector2Array([
+				Vector2(-5, -3), Vector2(0, -1), Vector2(2, -3),
+				Vector2(7, 0), Vector2(2, 3), Vector2(0, 1), Vector2(-5, 3)
+			])
+		"dark_nova":
+			sprite.polygon = PackedVector2Array([
+				Vector2(-6, -6), Vector2(0, -3), Vector2(6, -6),
+				Vector2(3, 0), Vector2(6, 6), Vector2(0, 3),
+				Vector2(-6, 6), Vector2(-3, 0)
+			])
+		_:
+			sprite.polygon = PackedVector2Array([
+				Vector2(-5, -3), Vector2(5, 0), Vector2(-5, 3)
+			])
+
 func _physics_process(delta: float) -> void:
 	if spell_type != "area":
 		position += direction * speed * delta
@@ -45,7 +81,6 @@ func _physics_process(delta: float) -> void:
 	if lifetime <= 0:
 		queue_free()
 	
-	# Visual trail
 	if sprite:
 		sprite.color = _get_spell_color()
 		modulate.a = clampf(lifetime, 0, 1)
@@ -58,14 +93,12 @@ func _on_body_entered(body: Node2D) -> void:
 	if body.is_in_group("enemies") and body.has_method("take_damage"):
 		var knockback = direction * 80
 		body.take_damage(damage, knockback)
-		_on_spell_hit(body)
-		# Spell heal from skill
+		AudioManager.play_sfx("spell_hit")
 		var heal = SkillManager.get_spell_heal()
 		if heal > 0:
 			GameManager.heal_player(int(damage * heal))
 		if spell_type == "projectile":
 			has_hit = true
-			# Chain lightning check
 			var chains = SkillManager.get_chain_targets()
 			if chains > 0:
 				_chain_to_nearby(body, chains)
@@ -77,15 +110,14 @@ func _on_area_entered(_area: Area2D) -> void:
 	pass
 
 func _do_area_damage() -> void:
-	# Delayed area damage
 	await get_tree().create_timer(0.1).timeout
+	AudioManager.play_sfx("spell_hit")
 	var bodies = get_tree().get_nodes_in_group("enemies")
 	for body in bodies:
 		if global_position.distance_to(body.global_position) < aoe_radius:
 			if body.has_method("take_damage"):
 				var dir = (body.global_position - global_position).normalized()
 				body.take_damage(damage, dir * 100)
-	# Spawn visual
 	if sprite:
 		var tw = create_tween()
 		tw.tween_property(sprite, "scale", Vector2(3, 3), 0.3)
@@ -104,10 +136,6 @@ func _chain_to_nearby(hit_body: Node2D, max_chains: int) -> void:
 			if enemy.has_method("take_damage"):
 				enemy.take_damage(damage * 0.5, Vector2.ZERO)
 				chained += 1
-
-func _on_spell_hit(_body: Node2D) -> void:
-	# Spawn hit effect
-	pass
 
 func _get_spell_color() -> Color:
 	var id = spell_data.get("id", "")

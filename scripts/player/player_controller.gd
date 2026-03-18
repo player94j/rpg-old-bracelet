@@ -1,6 +1,7 @@
 extends CharacterBody2D
 ## Player Controller - John the Baptist
 ## Handles movement, combat, dodge, magic, and all player interactions
+## Polished with distinct visuals and full audio integration
 
 # Signals
 signal hp_changed(current: int, maximum: int)
@@ -54,6 +55,8 @@ var nearby_interactables: Array[Node2D] = []
 
 # Visual flash for damage
 var flash_timer: float = 0.0
+# Trail effect
+var trail_timer: float = 0.0
 
 # Node references (set in _ready)
 @onready var sprite: Polygon2D = $Sprite
@@ -69,6 +72,7 @@ func _ready() -> void:
 	add_to_group("player")
 	attack_area.monitoring = false
 	_emit_all_stats()
+	_build_player_visual()
 	# Show movement tutorial on first play
 	TutorialManager.show_tutorial("movement")
 
@@ -78,6 +82,22 @@ func _emit_all_stats() -> void:
 	mana_changed.emit(GameManager.player_stats.mana, GameManager.player_stats.max_mana)
 	weapon_changed.emit(GameManager.get_current_weapon())
 	spell_changed.emit(GameManager.get_current_spell())
+
+func _build_player_visual() -> void:
+	if not sprite:
+		return
+	# Distinct knight/crusader silhouette - clearly different from enemies
+	sprite.polygon = PackedVector2Array([
+		Vector2(-6, -14), Vector2(-2, -18), Vector2(2, -18), Vector2(6, -14),  # helmet
+		Vector2(8, -10), Vector2(10, -6),  # right shoulder
+		Vector2(8, -2), Vector2(10, 4),  # right arm
+		Vector2(7, 8), Vector2(4, 13), Vector2(2, 14),  # right leg
+		Vector2(0, 12),  # center
+		Vector2(-2, 14), Vector2(-4, 13), Vector2(-7, 8),  # left leg
+		Vector2(-10, 4), Vector2(-8, -2),  # left arm
+		Vector2(-10, -6), Vector2(-8, -10),  # left shoulder
+	])
+	sprite.color = Color(0.15, 0.5, 0.85)  # Bright blue - very distinct
 
 func _physics_process(delta: float) -> void:
 	if GameManager.current_state != GameManager.GameState.PLAYING:
@@ -180,11 +200,13 @@ func _handle_combat_input() -> void:
 	if Input.is_action_just_pressed("cycle_spell"):
 		var spell = GameManager.cycle_spell()
 		spell_changed.emit(spell)
+		AudioManager.play_sfx("equip")
 	
 	# Cycle weapon
 	if Input.is_action_just_pressed("cycle_weapon"):
 		var weapon = GameManager.cycle_weapon()
 		weapon_changed.emit(weapon)
+		AudioManager.play_sfx("equip")
 
 func _handle_other_input() -> void:
 	# Interact
@@ -197,9 +219,11 @@ func _handle_other_input() -> void:
 		if GameManager.player_stats.hp < GameManager.player_stats.max_hp:
 			if GameManager.use_consumable("health_potion") or GameManager.use_consumable("health_potion_large"):
 				hp_changed.emit(GameManager.player_stats.hp, GameManager.player_stats.max_hp)
+				AudioManager.play_sfx("heal")
 		elif GameManager.player_stats.mana < GameManager.player_stats.max_mana:
 			if GameManager.use_consumable("mana_potion") or GameManager.use_consumable("mana_potion_large"):
 				mana_changed.emit(GameManager.player_stats.mana, GameManager.player_stats.max_mana)
+				AudioManager.play_sfx("heal")
 	
 	# UI toggles
 	if Input.is_action_just_pressed("inventory"):
@@ -218,6 +242,7 @@ func _start_dodge() -> void:
 	GameManager.player_stats.stamina -= DODGE_STAMINA_COST
 	stamina_changed.emit(GameManager.player_stats.stamina, GameManager.player_stats.max_stamina)
 	dodge_direction = face_dir if move_dir.length() < 0.1 else move_dir.normalized()
+	AudioManager.play_sfx("dodge")
 	# Visual: slight scale change
 	if sprite:
 		var tw = create_tween()
@@ -255,7 +280,16 @@ func _start_attack(heavy: bool) -> void:
 	combo_timer = COMBO_WINDOW
 	combo_changed.emit(combo_count)
 	
+	if combo_count >= COMBO_MAX:
+		AudioManager.play_sfx("combo")
+	
 	velocity = face_dir * 50  # Slight lunge
+	
+	# Play attack sound
+	if heavy:
+		AudioManager.play_sfx("heavy_swing")
+	else:
+		AudioManager.play_sfx("sword_swing")
 	
 	# Enable attack hitbox
 	_position_attack_area()
@@ -278,18 +312,26 @@ func _apply_attack_damage() -> void:
 		mult *= 1.5
 	
 	var final_damage = base_damage * mult
+	var hit_something = false
 	
 	for body in bodies:
 		if body.has_method("take_damage") and body.is_in_group("enemies"):
 			var knockback_dir = (body.global_position - global_position).normalized()
 			body.take_damage(final_damage, knockback_dir * ATTACK_KNOCKBACK)
 			damage_dealt.emit(final_damage)
+			hit_something = true
 			
 			# Life steal
 			var ls = SkillManager.get_life_steal()
 			if ls > 0:
 				GameManager.heal_player(int(final_damage * ls))
 				hp_changed.emit(GameManager.player_stats.hp, GameManager.player_stats.max_hp)
+	
+	if hit_something:
+		if is_heavy_attack:
+			AudioManager.play_sfx("heavy_hit")
+		else:
+			AudioManager.play_sfx("sword_hit")
 
 func _position_attack_area() -> void:
 	if attack_area:
@@ -322,6 +364,7 @@ func _start_cast() -> void:
 	spell_cooldown_timer = cd
 	
 	velocity = Vector2.ZERO
+	AudioManager.play_sfx("spell_cast")
 	_spawn_spell(spell)
 
 func _spawn_spell(spell: Dictionary) -> void:
@@ -354,6 +397,7 @@ func take_damage(amount: float, knockback: Vector2 = Vector2.ZERO) -> void:
 	GameManager.player_stats.hp -= int(final_damage)
 	hp_changed.emit(GameManager.player_stats.hp, GameManager.player_stats.max_hp)
 	flash_timer = 0.15
+	AudioManager.play_sfx("player_hit")
 	
 	# Knockback
 	velocity += knockback
@@ -371,6 +415,7 @@ func _die() -> void:
 	current_state = State.DEAD
 	GameManager.player_stats.hp = 0
 	velocity = Vector2.ZERO
+	AudioManager.play_sfx("player_death")
 	player_died_signal.emit()
 	GameManager.player_died.emit()
 	GameManager.set_state(GameManager.GameState.DEAD)
@@ -430,11 +475,14 @@ func _update_face_direction() -> void:
 func _update_visuals(_delta: float) -> void:
 	if not sprite:
 		return
-	# Flash white when damaged
+	# Flash red when damaged
 	if flash_timer > 0:
 		sprite.color = Color(1, 0.3, 0.3)
+	elif is_invulnerable:
+		# Flicker during i-frames
+		sprite.color = Color(0.15, 0.5, 0.85, 0.5)
 	else:
-		sprite.color = Color(0.2, 0.6, 0.9)  # Blue tint for John
+		sprite.color = Color(0.15, 0.5, 0.85)
 	
 	# Slight bob when moving
 	if current_state == State.MOVING:

@@ -1,6 +1,7 @@
 extends CharacterBody2D
 ## Base Enemy AI - Foundation for all enemy types
 ## Supports patrol, chase, attack, flee, and death behaviors
+## Enemies have a spawn grace period before they can detect/attack the player
 
 signal enemy_died(enemy_data: Dictionary)
 signal health_changed(current: float, maximum: float)
@@ -21,8 +22,8 @@ signal health_changed(current: float, maximum: float)
 @export var is_elite: bool = false
 
 # State
-enum AIState { IDLE, PATROL, CHASE, ATTACK, HURT, FLEE, DEAD }
-var ai_state: AIState = AIState.IDLE
+enum AIState { SPAWNING, IDLE, PATROL, CHASE, ATTACK, HURT, FLEE, DEAD }
+var ai_state: AIState = AIState.SPAWNING
 var hp: float = 50.0
 var target: Node2D = null
 var patrol_points: Array[Vector2] = []
@@ -36,6 +37,8 @@ var wander_dir: Vector2 = Vector2.ZERO
 var knockback_velocity: Vector2 = Vector2.ZERO
 var flash_timer: float = 0.0
 var ng_scale: float = 1.0
+var spawn_grace_timer: float = 4.0  # Enemies won't detect player for 4 seconds after spawn
+var name_label: Label = null
 
 @onready var sprite: Polygon2D = $Sprite
 @onready var attack_area: Area2D = $AttackArea
@@ -56,6 +59,13 @@ func _ready() -> void:
 		health_bar.visible = false
 	_generate_patrol_points()
 	state_timer = randf_range(0.5, 2.0)
+	# Start in SPAWNING state with grace period
+	ai_state = AIState.SPAWNING
+	spawn_grace_timer = randf_range(3.0, 6.0)  # Random 3-6 seconds grace
+	# Create enemy name label
+	_create_name_label()
+	# Build unique visual for this enemy type
+	_build_enemy_visual()
 
 func _generate_patrol_points() -> void:
 	for i in range(3):
@@ -63,12 +73,33 @@ func _generate_patrol_points() -> void:
 		var dist = randf_range(50, 150)
 		patrol_points.append(home_position + Vector2(cos(angle), sin(angle)) * dist)
 
+func _create_name_label() -> void:
+	name_label = Label.new()
+	name_label.text = enemy_name
+	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	name_label.position = Vector2(-30, -32)
+	name_label.add_theme_font_size_override("font_size", 8)
+	name_label.add_theme_color_override("font_color", Color(0.8, 0.7, 0.6, 0.7))
+	name_label.visible = false
+	add_child(name_label)
+
 func _physics_process(delta: float) -> void:
 	if GameManager.current_state != GameManager.GameState.PLAYING:
 		velocity = Vector2.ZERO
 		return
 	
 	_update_timers(delta)
+	
+	# Handle spawn grace period
+	if ai_state == AIState.SPAWNING:
+		spawn_grace_timer -= delta
+		velocity = Vector2.ZERO
+		if spawn_grace_timer <= 0:
+			ai_state = AIState.IDLE
+			state_timer = randf_range(1.0, 3.0)
+		move_and_slide()
+		_update_visuals(delta)
+		return
 	
 	match ai_state:
 		AIState.IDLE:
@@ -129,10 +160,14 @@ func _ai_patrol(delta: float) -> void:
 	_check_for_player()
 
 func _check_for_player() -> void:
+	# Don't detect during grace period
+	if ai_state == AIState.SPAWNING:
+		return
 	var player = _find_player()
 	if player and global_position.distance_to(player.global_position) < detect_range:
 		target = player
 		ai_state = AIState.CHASE
+		AudioManager.play_sfx("enemy_alert")
 
 func _ai_chase(delta: float) -> void:
 	if not _valid_target():
@@ -149,7 +184,7 @@ func _ai_chase(delta: float) -> void:
 	
 	if dist <= attack_range:
 		ai_state = AIState.ATTACK
-		state_timer = 0.2  # Wind-up
+		state_timer = 0.3  # Wind-up time before attacking
 		velocity = Vector2.ZERO
 		return
 	
@@ -172,6 +207,7 @@ func _perform_attack() -> void:
 	if dist <= attack_range * 1.5 and target.has_method("take_damage"):
 		var knockback_dir = (target.global_position - global_position).normalized()
 		target.take_damage(damage, knockback_dir * 100)
+		AudioManager.play_sfx("enemy_attack")
 	# Visual lunge
 	if _valid_target():
 		var lunge_dir = (target.global_position - global_position).normalized()
@@ -206,14 +242,18 @@ func take_damage(amount: float, knockback: Vector2 = Vector2.ZERO) -> void:
 	if health_bar:
 		health_bar.value = hp
 		health_bar.visible = true
+	if name_label:
+		name_label.visible = true
 	health_changed.emit(hp, max_hp)
+	AudioManager.play_sfx("enemy_hit")
 	
 	if hp <= 0:
 		_die()
 	else:
 		ai_state = AIState.HURT
 		hurt_timer = 0.3
-		# Aggro on attacker
+		# Aggro on attacker - also cancel grace period
+		spawn_grace_timer = 0.0
 		var player = _find_player()
 		if player:
 			target = player
@@ -234,6 +274,7 @@ func _die() -> void:
 	GameManager.on_enemy_killed(data)
 	QuestManager.notify_kill(enemy_id)
 	enemy_died.emit(data)
+	AudioManager.play_sfx("enemy_death")
 	
 	# Drop loot
 	_drop_loot()
@@ -279,20 +320,99 @@ func _update_visuals(_delta: float) -> void:
 		sprite.color = Color.WHITE
 	else:
 		sprite.color = _get_enemy_color()
+	# Spawning enemies have reduced alpha
+	if ai_state == AIState.SPAWNING:
+		sprite.modulate.a = lerpf(0.3, 1.0, 1.0 - (spawn_grace_timer / 6.0))
+	else:
+		sprite.modulate.a = 1.0
 
 func _get_enemy_color() -> Color:
 	if is_elite:
 		return Color(0.9, 0.2, 0.9)  # Purple for elites
 	match enemy_id:
-		"hollow_soldier": return Color(0.6, 0.5, 0.4)
-		"hollow_archer": return Color(0.5, 0.6, 0.4)
-		"mire_beast": return Color(0.3, 0.6, 0.2)
-		"mire_spitter": return Color(0.4, 0.7, 0.1)
-		"frost_wolf": return Color(0.7, 0.8, 0.95)
-		"shadow_knight": return Color(0.3, 0.1, 0.3)
-		"shadow_mage": return Color(0.4, 0.1, 0.5)
-		"bandit": return Color(0.6, 0.4, 0.3)
-		_: return Color(0.7, 0.3, 0.3)
+		"hollow_soldier": return Color(0.55, 0.45, 0.35)
+		"hollow_archer": return Color(0.45, 0.55, 0.35)
+		"mire_beast": return Color(0.25, 0.55, 0.15)
+		"mire_spitter": return Color(0.35, 0.6, 0.08)
+		"frost_wolf": return Color(0.65, 0.78, 0.92)
+		"shadow_knight": return Color(0.25, 0.08, 0.3)
+		"shadow_mage": return Color(0.35, 0.08, 0.5)
+		"bandit": return Color(0.55, 0.35, 0.25)
+		"boss_minion": return Color(0.6, 0.15, 0.15)
+		_: return Color(0.65, 0.25, 0.25)
+
+func _build_enemy_visual() -> void:
+	# Give each enemy type a unique polygon shape
+	if not sprite:
+		return
+	match enemy_id:
+		"hollow_soldier":
+			# Humanoid with sword outline
+			sprite.polygon = PackedVector2Array([
+				Vector2(-7, -12), Vector2(0, -16), Vector2(7, -12),
+				Vector2(8, -4), Vector2(12, -8), Vector2(13, -2),  # sword arm
+				Vector2(8, 2), Vector2(6, 10), Vector2(2, 10),
+				Vector2(0, 14), Vector2(-2, 10), Vector2(-6, 10), Vector2(-8, 2)
+			])
+		"hollow_archer":
+			# Slim with bow shape
+			sprite.polygon = PackedVector2Array([
+				Vector2(-5, -14), Vector2(0, -18), Vector2(5, -14),
+				Vector2(6, -6), Vector2(14, -12), Vector2(14, 0),  # bow
+				Vector2(6, 2), Vector2(4, 10), Vector2(1, 12),
+				Vector2(-1, 12), Vector2(-4, 10), Vector2(-6, 2)
+			])
+		"mire_beast":
+			# Blobby, organic shape
+			sprite.polygon = PackedVector2Array([
+				Vector2(-10, -8), Vector2(-4, -14), Vector2(4, -14), Vector2(10, -8),
+				Vector2(12, 0), Vector2(10, 8), Vector2(4, 12),
+				Vector2(-4, 12), Vector2(-10, 8), Vector2(-12, 0)
+			])
+		"mire_spitter":
+			# Frog-like with wide mouth
+			sprite.polygon = PackedVector2Array([
+				Vector2(-12, -6), Vector2(-6, -12), Vector2(6, -12), Vector2(12, -6),
+				Vector2(14, 0), Vector2(10, 6), Vector2(6, 10),
+				Vector2(-6, 10), Vector2(-10, 6), Vector2(-14, 0)
+			])
+		"frost_wolf":
+			# Wolf/canine shape
+			sprite.polygon = PackedVector2Array([
+				Vector2(-4, -12), Vector2(-2, -16), Vector2(2, -16), Vector2(4, -12),
+				Vector2(10, -8), Vector2(12, -2), Vector2(8, 4),
+				Vector2(4, 8), Vector2(0, 14),  # tail point
+				Vector2(-4, 8), Vector2(-8, 4), Vector2(-12, -2), Vector2(-10, -8)
+			])
+		"shadow_knight":
+			# Armored, angular
+			sprite.polygon = PackedVector2Array([
+				Vector2(-10, -14), Vector2(0, -20), Vector2(10, -14),
+				Vector2(14, -6), Vector2(14, 6), Vector2(10, 14),
+				Vector2(-10, 14), Vector2(-14, 6), Vector2(-14, -6)
+			])
+		"shadow_mage":
+			# Robed, flowing
+			sprite.polygon = PackedVector2Array([
+				Vector2(-4, -16), Vector2(0, -20), Vector2(4, -16),
+				Vector2(6, -8), Vector2(10, -4), Vector2(12, 2),
+				Vector2(8, 10), Vector2(0, 16),
+				Vector2(-8, 10), Vector2(-12, 2), Vector2(-10, -4), Vector2(-6, -8)
+			])
+		"bandit":
+			# Hooded figure
+			sprite.polygon = PackedVector2Array([
+				Vector2(-8, -10), Vector2(0, -15), Vector2(8, -10),
+				Vector2(10, -4), Vector2(8, 4), Vector2(6, 10),
+				Vector2(2, 12), Vector2(-2, 12), Vector2(-6, 10),
+				Vector2(-8, 4), Vector2(-10, -4)
+			])
+		"boss_minion":
+			# Small hollow
+			sprite.polygon = PackedVector2Array([
+				Vector2(-6, -8), Vector2(0, -12), Vector2(6, -8),
+				Vector2(6, 6), Vector2(-6, 6)
+			])
 
 func setup_from_data(data: Dictionary) -> void:
 	enemy_id = data.get("id", enemy_id)
