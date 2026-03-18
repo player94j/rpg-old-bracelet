@@ -1,6 +1,6 @@
 # Elden Baptist - Dark Fantasy RPG
 
-A 2D top-down open-world RPG inspired by Elden Ring, built with Godot Engine 4.x.
+A 2D top-down open-world RPG inspired by Elden Ring, built with Godot Engine 4.x. NOT FINISHED!!!
 
 ## Game Overview
 
